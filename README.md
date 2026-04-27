@@ -1,36 +1,78 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Persona Guide
 
-## Getting Started
+一个基于 Next.js 的个人形象分析图卡生成工具。用户上传人像照片后，应用会调用 OpenAI 兼容的图片生成接口，输出一张 3:4 的「个人形象分析方案」图卡，并在本地保存输入图、输出图和元数据。
 
-First, run the development server:
+## 功能
+
+- 上传 JPG、PNG、WebP 等图片，单张最大 12MB。
+- 生成包含形象方案、原生妆容、适骨发型、色彩分析、四季穿搭和珠宝搭配的分析图卡。
+- 支持结果预览、缩放、拖拽查看、下载和保存。
+- 服务端会把每次生成记录保存到 `storage/<timestamp>/`。
+
+## 技术栈
+
+- Next.js 16 App Router
+- React 19
+- Tailwind CSS 4
+- OpenAI Node SDK，使用 OpenAI 兼容接口
+- pnpm
+
+## 本地开发
+
+安装依赖：
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+复制环境变量示例并填写真实值：
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cp env.example .env
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+启动开发服务：
 
-## Learn More
+```bash
+pnpm dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+打开 [http://localhost:3000](http://localhost:3000) 使用应用。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 环境变量
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| 变量 | 说明 |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI 兼容接口的 API Key。 |
+| `OPENAI_BASE_URL` | OpenAI 兼容接口地址，例如 OpenRouter 的 `https://openrouter.ai/api/v1`。 |
+| `OPENAI_IMAGE_MODEL` | 用于生成图卡的图片模型。 |
+| `ANALYSIS_STORAGE_DIR` | 生成记录保存目录。未设置时默认使用项目根目录下的 `storage`。 |
 
-## Deploy on Vercel
+## 常用命令
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm dev      # 启动本地开发服务
+pnpm build    # 构建生产版本
+pnpm start    # 启动生产服务
+pnpm lint     # 运行 ESLint
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 数据保存
+
+每次生成都会创建一个以时间戳命名的目录，内容通常包括：
+
+- `input.<ext>`：上传的原始图片。
+- `output.<ext>`：生成后的图卡。
+- `metadata.json`：生成时间、模型、文件信息和提示词等元数据。
+
+`storage/` 已加入 `.gitignore`，不要提交用户上传图片、生成结果或 `.env` 等敏感文件。
+
+## Docker 部署
+
+项目提供了 standalone 构建的 `Dockerfile` 和简单部署脚本：
+
+```bash
+./deploy.sh
+```
+
+脚本会拉取最新代码、构建镜像、重建 `persona-guide` 容器，并将宿主机的 `.env` 和 `storage/` 挂载到容器中。默认对外端口为 `3300`，容器内服务端口为 `3000`。

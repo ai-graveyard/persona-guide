@@ -13,7 +13,7 @@ echo ">> Ensuring storage directory exists..."
 mkdir -p storage
 
 echo ">> Starting new container..."
-docker run --restart=always --name persona-guide \
+docker run -d --restart=always --name persona-guide \
   -p 3300:3000 \
   -v $PWD/.env:/app/.env \
   -v $PWD/storage:/app/storage \
