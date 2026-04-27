@@ -7,6 +7,7 @@
 - 上传 JPG、PNG、WebP 等图片，单张最大 12MB。
 - 生成包含形象方案、原生妆容、适骨发型、色彩分析、四季穿搭和珠宝搭配的分析图卡。
 - 支持结果预览、缩放、拖拽查看、下载和保存。
+- 图片生成以异步任务执行，前端会轮询任务状态直到生成完成。
 - 服务端会把每次生成记录保存到 `storage/<timestamp>/`。
 
 ## 技术栈
@@ -63,9 +64,16 @@ pnpm lint     # 运行 ESLint
 
 - `input.<ext>`：上传的原始图片。
 - `output.<ext>`：生成后的图卡。
+- `status.json`：异步任务状态，可能为 `queued`、`processing`、`completed` 或 `failed`。
 - `metadata.json`：生成时间、模型、文件信息和提示词等元数据。
 
 `storage/` 已加入 `.gitignore`，不要提交用户上传图片、生成结果或 `.env` 等敏感文件。
+
+## API 行为
+
+- `POST /api/analyze`：接收表单字段 `image`，校验通过后保存原图并创建异步生成任务，成功时返回 `202` 和 `{ "jobId": "..." }`。
+- `GET /api/analyze?jobId=<id>`：查询任务状态。任务完成后响应中会包含可展示的 `imageUrl`。
+- `GET /api/analyze?jobId=<id>&asset=output`：读取已完成任务的输出图卡，供页面预览和下载使用。
 
 ## Docker 部署
 

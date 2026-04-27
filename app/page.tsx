@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 const maxImageSize = 12 * 1024 * 1024;
 const minPreviewZoom = 0.25;
 const maxPreviewZoom = 5;
+const jobPollingInterval = 3000;
 const generatingStatuses = [
   {
     buttonLabel: "正在开始生成...",
@@ -46,8 +47,23 @@ const generatingStatuses = [
   },
 ];
 
+type AnalyzeJobResponse = {
+  jobId?: string;
+  error?: string;
+};
+
+type AnalyzeJobStatusResponse = {
+  status?: "queued" | "processing" | "completed" | "failed";
+  imageUrl?: string;
+  error?: string;
+};
+
 function clampPreviewZoom(value: number) {
   return Math.min(maxPreviewZoom, Math.max(minPreviewZoom, value));
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 export default function Home() {
@@ -200,20 +216,46 @@ export default function Home() {
         method: "POST",
         body: formData,
       });
-      const payload = (await response.json()) as {
-        imageUrl?: string;
-        error?: string;
-      };
+      const payload = (await response.json()) as AnalyzeJobResponse;
 
       if (!response.ok) {
-        throw new Error(payload.error ?? "生成失败，请稍后重试。");
+        throw new Error(payload.error ?? "创建生成任务失败，请稍后重试。");
       }
 
-      if (!payload.imageUrl) {
-        throw new Error("生成完成，但没有收到图片结果。");
+      if (!payload.jobId) {
+        throw new Error("任务已提交，但没有收到任务 ID。");
       }
 
-      setResultUrl(payload.imageUrl);
+      while (true) {
+        await wait(jobPollingInterval);
+
+        const statusResponse = await fetch(
+          `/api/analyze?jobId=${encodeURIComponent(payload.jobId)}`,
+          { cache: "no-store" },
+        );
+        const statusPayload = (await statusResponse.json()) as AnalyzeJobStatusResponse;
+
+        if (!statusResponse.ok) {
+          throw new Error(statusPayload.error ?? "查询生成进度失败，请稍后重试。");
+        }
+
+        if (statusPayload.status === "completed") {
+          if (!statusPayload.imageUrl) {
+            throw new Error("生成完成，但没有收到图片结果。");
+          }
+
+          setResultUrl(statusPayload.imageUrl);
+          break;
+        }
+
+        if (statusPayload.status === "failed") {
+          throw new Error(statusPayload.error ?? "生成失败，请稍后重试。");
+        }
+
+        if (statusPayload.status !== "queued" && statusPayload.status !== "processing") {
+          throw new Error("生成任务状态异常，请稍后重试。");
+        }
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "生成失败，请稍后重试。");
     } finally {

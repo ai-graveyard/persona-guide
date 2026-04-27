@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 
@@ -10,6 +10,7 @@ const MAX_IMAGE_SIZE = 12 * 1024 * 1024;
 const STORAGE_DIR =
   process.env.ANALYSIS_STORAGE_DIR ??
   path.join(/*turbopackIgnore: true*/ process.cwd(), "storage");
+const jobIdPattern = /^\d{8}-\d{6}-\d{6}$/;
 
 const imageExtensionsByType: Record<string, string> = {
   "image/avif": "avif",
@@ -31,6 +32,33 @@ type OpenRouterImageRequest = Omit<
     aspect_ratio: "3:4";
     quality: "low" | "medium" | "high";
   };
+};
+
+type AnalysisJobStatus = "queued" | "processing" | "completed" | "failed";
+
+type AnalysisJobState = {
+  id: string;
+  status: AnalysisJobStatus;
+  createdAt: string;
+  updatedAt: string;
+  imageUrl?: string;
+  error?: string;
+};
+
+type AnalysisJob = {
+  id: string;
+  directory: string;
+  createdAt: Date;
+  input: {
+    fileName: string;
+    originalFileName: string;
+    mimeType: string;
+    size: number;
+    buffer: Buffer;
+  };
+  openaiApiKey: string;
+  openaiBaseUrl: string;
+  imageModel: string;
 };
 
 const analysisPrompt = `
@@ -161,6 +189,36 @@ async function createAnalysisDirectory() {
   return { directory, folderName, uploadTime };
 }
 
+function getAnalysisDirectory(jobId: string) {
+  if (!jobIdPattern.test(jobId)) {
+    return null;
+  }
+
+  return path.join(/*turbopackIgnore: true*/ STORAGE_DIR, jobId);
+}
+
+function getStatusPath(directory: string) {
+  return path.join(/*turbopackIgnore: true*/ directory, "status.json");
+}
+
+async function writeJobStatus(
+  directory: string,
+  state: Omit<AnalysisJobState, "updatedAt">,
+) {
+  const jobState: AnalysisJobState = {
+    ...state,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await writeFile(getStatusPath(directory), JSON.stringify(jobState, null, 2));
+}
+
+async function readJobStatus(directory: string) {
+  const statusFile = await readFile(getStatusPath(directory), "utf8");
+
+  return JSON.parse(statusFile) as AnalysisJobState;
+}
+
 function parseDataUrl(dataUrl: string) {
   const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
 
@@ -197,6 +255,158 @@ async function downloadGeneratedImage(imageUrl: string) {
   const buffer = Buffer.from(await response.arrayBuffer());
 
   return { buffer, mimeType };
+}
+
+async function runAnalysisJob(job: AnalysisJob) {
+  try {
+    await writeJobStatus(job.directory, {
+      id: job.id,
+      status: "processing",
+      createdAt: job.createdAt.toISOString(),
+    });
+
+    const imageDataUrl = bufferToDataUrl(job.input.buffer, job.input.mimeType);
+    const client = new OpenAI({
+      baseURL: job.openaiBaseUrl,
+      apiKey: job.openaiApiKey,
+    });
+
+    const requestPayload: OpenRouterImageRequest = {
+      model: job.imageModel,
+      messages: [
+        {
+          role: "user" as const,
+          content: [
+            { type: "text" as const, text: analysisPrompt },
+            {
+              type: "image_url" as const,
+              image_url: {
+                url: imageDataUrl,
+              },
+            },
+          ],
+        },
+      ],
+      modalities: ["image", "text"],
+      image_config: {
+        aspect_ratio: "3:4",
+        quality: "low",
+      },
+    };
+
+    const apiResponse = await client.chat.completions.create(
+      requestPayload as unknown as ChatCompletionCreateParamsNonStreaming,
+    );
+    const message = apiResponse.choices[0]?.message;
+    const generatedImageUrl = getImageUrlFromMessage(message);
+
+    if (!generatedImageUrl) {
+      throw new Error("图片生成成功，但未在响应中找到可展示的图片。");
+    }
+
+    const generatedImage = await downloadGeneratedImage(generatedImageUrl);
+    const outputExtension = getExtensionFromMimeType(generatedImage.mimeType);
+    const outputFileName = `output.${outputExtension}`;
+    const outputPath = path.join(/*turbopackIgnore: true*/ job.directory, outputFileName);
+    const resultImageUrl = `/api/analyze?jobId=${encodeURIComponent(job.id)}&asset=output`;
+
+    await writeFile(outputPath, generatedImage.buffer);
+    await writeFile(
+      path.join(/*turbopackIgnore: true*/ job.directory, "metadata.json"),
+      JSON.stringify(
+        {
+          id: job.id,
+          createdAt: job.createdAt.toISOString(),
+          storageDirectory: job.directory,
+          input: {
+            fileName: job.input.fileName,
+            originalFileName: job.input.originalFileName,
+            mimeType: job.input.mimeType,
+            size: job.input.size,
+          },
+          output: {
+            fileName: outputFileName,
+            mimeType: generatedImage.mimeType,
+            size: generatedImage.buffer.byteLength,
+            sourceUrl: generatedImageUrl.startsWith("data:") ? null : generatedImageUrl,
+          },
+          model: job.imageModel,
+          generationPrompt: analysisPrompt,
+        },
+        null,
+        2,
+      ),
+    );
+
+    await writeJobStatus(job.directory, {
+      id: job.id,
+      status: "completed",
+      createdAt: job.createdAt.toISOString(),
+      imageUrl: resultImageUrl,
+    });
+  } catch (caughtError) {
+    console.error("Image generation job failed:", caughtError);
+
+    const errorMessage =
+      caughtError instanceof Error
+        ? caughtError.message
+        : "图片生成服务暂时不可用，请稍后再试。";
+
+    await writeJobStatus(job.directory, {
+      id: job.id,
+      status: "failed",
+      createdAt: job.createdAt.toISOString(),
+      error: errorMessage,
+    });
+  }
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const jobId = searchParams.get("jobId");
+
+  if (!jobId) {
+    return NextResponse.json({ error: "缺少任务 ID。" }, { status: 400 });
+  }
+
+  const directory = getAnalysisDirectory(jobId);
+
+  if (!directory) {
+    return NextResponse.json({ error: "无效的任务 ID。" }, { status: 400 });
+  }
+
+  try {
+    const metadataPath = path.join(/*turbopackIgnore: true*/ directory, "metadata.json");
+
+    if (searchParams.get("asset") === "output") {
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as {
+        output?: {
+          fileName?: string;
+          mimeType?: string;
+        };
+      };
+      const outputFileName = metadata.output?.fileName;
+
+      if (!outputFileName) {
+        return NextResponse.json({ error: "生成图片不存在。" }, { status: 404 });
+      }
+
+      const outputBuffer = await readFile(
+        path.join(/*turbopackIgnore: true*/ directory, outputFileName),
+      );
+
+      return new NextResponse(new Uint8Array(outputBuffer), {
+        headers: {
+          "content-type": metadata.output?.mimeType ?? "image/png",
+          "cache-control": "private, max-age=31536000, immutable",
+        },
+      });
+    }
+
+    return NextResponse.json(await readJobStatus(directory));
+  } catch {
+    return NextResponse.json({ error: "任务不存在或尚未生成完成。" }, { status: 404 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -238,92 +448,38 @@ export async function POST(request: Request) {
     const inputFileName = `input.${inputExtension}`;
     const inputPath = path.join(/*turbopackIgnore: true*/ directory, inputFileName);
     const inputBuffer = Buffer.from(await image.arrayBuffer());
-    const imageDataUrl = bufferToDataUrl(inputBuffer, image.type);
 
     await writeFile(inputPath, inputBuffer);
-
-    const client = new OpenAI({
-      baseURL: openaiBaseUrl,
-      apiKey: openaiApiKey,
+    await writeJobStatus(directory, {
+      id: folderName,
+      status: "queued",
+      createdAt: uploadTime.toISOString(),
     });
 
-    const requestPayload: OpenRouterImageRequest = {
-      model: imageModel,
-      messages: [
-        {
-          role: "user" as const,
-          content: [
-            { type: "text" as const, text: analysisPrompt },
-            {
-              type: "image_url" as const,
-              image_url: {
-                url: imageDataUrl,
-              },
-            },
-          ],
-        },
-      ],
-      modalities: ["image", "text"],
-      image_config: {
-        aspect_ratio: "3:4",
-        quality: "low",
+    void runAnalysisJob({
+      id: folderName,
+      directory,
+      createdAt: uploadTime,
+      input: {
+        fileName: inputFileName,
+        originalFileName: image.name,
+        mimeType: image.type,
+        size: image.size,
+        buffer: inputBuffer,
       },
-    };
+      openaiApiKey,
+      openaiBaseUrl,
+      imageModel,
+    });
 
-    const apiResponse = await client.chat.completions.create(
-      requestPayload as unknown as ChatCompletionCreateParamsNonStreaming,
-    );
-    const message = apiResponse.choices[0]?.message;
-    const imageUrl = getImageUrlFromMessage(message);
-
-    if (!imageUrl) {
-      return NextResponse.json(
-        { error: "图片生成成功，但未在响应中找到可展示的图片。" },
-        { status: 502 },
-      );
-    }
-
-    const generatedImage = await downloadGeneratedImage(imageUrl);
-    const outputExtension = getExtensionFromMimeType(generatedImage.mimeType);
-    const outputFileName = `output.${outputExtension}`;
-    const outputPath = path.join(/*turbopackIgnore: true*/ directory, outputFileName);
-
-    await writeFile(outputPath, generatedImage.buffer);
-    await writeFile(
-      path.join(/*turbopackIgnore: true*/ directory, "metadata.json"),
-      JSON.stringify(
-        {
-          id: folderName,
-          createdAt: uploadTime.toISOString(),
-          storageDirectory: directory,
-          input: {
-            fileName: inputFileName,
-            originalFileName: image.name,
-            mimeType: image.type,
-            size: image.size,
-          },
-          output: {
-            fileName: outputFileName,
-            mimeType: generatedImage.mimeType,
-            size: generatedImage.buffer.byteLength,
-            sourceUrl: imageUrl.startsWith("data:") ? null : imageUrl,
-          },
-          model: imageModel,
-          generationPrompt: analysisPrompt,
-        },
-        null,
-        2,
-      ),
-    );
-
-    return NextResponse.json({ imageUrl });
+    return NextResponse.json({ jobId: folderName }, { status: 202 });
   } catch (caughtError) {
-    console.error("Image generation request failed:", caughtError);
+    console.error("Image generation job creation failed:", caughtError);
 
     const errorMessage =
       caughtError instanceof Error
         ? caughtError.message
-        : "图片生成服务暂时不可用，请稍后再试。";
+        : "创建生成任务失败，请稍后再试。";
 
     return NextResponse.json(
       { error: errorMessage },
