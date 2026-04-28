@@ -6,9 +6,10 @@ Persona Guide 是一个开源的个人形象分析图卡生成工具。上传一
 
 ## 预览
 
-![Persona Guide 生成的个人形象分析图卡示例一](.github/preview1.png)
-
-![Persona Guide 生成的个人形象分析图卡示例二](.github/preview2.png)
+<p align="center">
+  <img src=".github/preview1.png" alt="Persona Guide 生成的个人形象分析图卡示例一" width="49%" />
+  <img src=".github/preview2.png" alt="Persona Guide 生成的个人形象分析图卡示例二" width="49%" />
+</p>
 
 ## 主要功能
 
