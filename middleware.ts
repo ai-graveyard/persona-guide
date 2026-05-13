@@ -1,3 +1,4 @@
+// Next.js 会在构建时将此处读取的 INVITE_CODE 内联进 Edge 产物；Docker 下需与运行时 .env 一致（参见 Dockerfile / deploy.sh）。
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 

@@ -7,6 +7,7 @@ import {
   getInviteCodeFromEnv,
   INVITE_COOKIE_NAME,
 } from "@/lib/invite-gate";
+import { requestIsLikelyHttps } from "@/lib/request-https";
 
 function timingSafeEqualString(a: string, b: string): boolean {
   const ba = Buffer.from(a, "utf8");
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
   const response = NextResponse.json({ ok: true });
   response.cookies.set(INVITE_COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: requestIsLikelyHttps(request),
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 400,

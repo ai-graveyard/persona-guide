@@ -106,7 +106,11 @@ pnpm lint     # 运行 ESLint
 ./deploy.sh
 ```
 
-脚本会拉取最新代码、构建镜像、重建 `persona-guide` 容器，并将宿主机的 `.env` 和 `storage/` 挂载到容器中。默认对外端口为 `3300`，容器内服务端口为 `3000`。若使用邀请码门禁，在宿主机 `.env` 中配置 `INVITE_CODE` 即可，无需改脚本。
+脚本会拉取最新代码、构建镜像、重建 `persona-guide` 容器，并将宿主机的 `.env` 和 `storage/` 挂载到容器中。默认对外端口为 `3300`，容器内服务端口为 `3000`。
+
+启用邀请码时请注意：**Next.js 会在构建时把中间件里的 `INVITE_CODE` 写进 Edge 产物**，仅运行时挂载 `.env` 无法单独更新门禁；构建阶段与运行时的邀请码必须一致。`deploy.sh` 会在检测到 `.env` 里的 `INVITE_CODE` 时自动传入 `docker build --build-arg INVITE_CODE=...`。手动构建可参考 `Dockerfile` 注释。
+
+若浏览器提示「重定向次数过多」，常见原因包括：① 构建时与运行时的 `INVITE_CODE` 不一致；② 反向代理未向 Node 传递 `X-Forwarded-Proto: https`，导致 Secure Cookie 无法写入。此时应重新用正确的 build-arg 构建，并在 Nginx/Caddy 等层设置 forwarded 头。
 
 ## 许可证
 

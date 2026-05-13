@@ -16,6 +16,12 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Edge 中间件在构建时内联 INVITE_CODE；仅运行时挂载 .env 不会更新门禁逻辑。
+# 启用邀请码时请传入与运行时 .env 相同的值，例如：
+#   docker build --build-arg INVITE_CODE=your_code -t persona-guide .
+ARG INVITE_CODE
+ENV INVITE_CODE=$INVITE_CODE
+
 RUN corepack enable pnpm
 RUN pnpm config set registry https://registry.npmmirror.com
 RUN pnpm build

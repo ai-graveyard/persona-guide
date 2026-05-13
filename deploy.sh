@@ -4,7 +4,19 @@ echo ">> Pulling latest code..."
 git pull
 
 echo ">> Building docker image..."
-docker build -t persona-guide .
+INVITE_BUILD_ARGS=()
+if [ -f .env ]; then
+  INVITE_LINE="$(grep -E '^INVITE_CODE=' .env | head -1 || true)"
+  if [ -n "${INVITE_LINE}" ]; then
+    INVITE_VAL="${INVITE_LINE#INVITE_CODE=}"
+    INVITE_VAL="${INVITE_VAL%\"}"
+    INVITE_VAL="${INVITE_VAL#\"}"
+    INVITE_VAL="${INVITE_VAL%\'}"
+    INVITE_VAL="${INVITE_VAL#\'}"
+    INVITE_BUILD_ARGS+=(--build-arg "INVITE_CODE=${INVITE_VAL}")
+  fi
+fi
+docker build "${INVITE_BUILD_ARGS[@]}" -t persona-guide .
 
 echo ">> Stopping and removing old container..."
 docker rm -f persona-guide
