@@ -18,6 +18,7 @@ Persona Guide 是一个开源的个人形象分析图卡生成工具。上传一
 - 前端支持结果预览、缩放、拖拽查看、下载和保存。
 - 服务端使用异步任务处理图片生成，前端会轮询任务状态直到完成。
 - 每次生成都会在本地保存输入图、输出图、任务状态和元数据，方便回溯与调试。
+- 可选访问门禁：在环境变量中设置 `INVITE_CODE` 后，访客须先在 `/invite` 输入正确邀请码才能打开站点并调用分析接口；未配置时行为与公开站点一致。
 
 ## 技术栈
 
@@ -48,6 +49,8 @@ OPENAI_API_KEY=your_api_key
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
 OPENAI_IMAGE_MODEL=openai/gpt-5.4-image-2
 ANALYSIS_STORAGE_DIR=storage
+# 可选：非空则启用邀请码；访问任意受保护页面会跳转到 /invite
+# INVITE_CODE=your_secret_invite_string
 ```
 
 启动开发服务：
@@ -56,7 +59,7 @@ ANALYSIS_STORAGE_DIR=storage
 pnpm dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000) 上传照片并生成图卡。
+打开 [http://localhost:3000](http://localhost:3000)。若已配置 `INVITE_CODE`，浏览器会先进入邀请码页，验证通过后再上传照片并生成图卡。
 
 ## 环境变量
 
@@ -66,6 +69,7 @@ pnpm dev
 | `OPENAI_BASE_URL` | 是 | OpenAI 兼容接口地址，例如 OpenRouter 的 `https://openrouter.ai/api/v1`。 |
 | `OPENAI_IMAGE_MODEL` | 是 | 用于生成图卡的图片模型。 |
 | `ANALYSIS_STORAGE_DIR` | 否 | 生成记录保存目录，未设置时默认使用项目根目录下的 `storage/`。 |
+| `INVITE_CODE` | 否 | 访问门禁用邀请码。**为空或不配置**：不启用门禁。**非空**：必须与用户输入一致才可访问前端主站与 `POST/GET /api/analyze`；邀请页为 `/invite`，校验接口为 `POST /api/invite`。 |
 
 ## 常用命令
 
@@ -89,7 +93,8 @@ pnpm lint     # 运行 ESLint
 
 ## API 行为
 
-- `POST /api/analyze`：接收表单字段 `image`，校验通过后保存原图并创建异步生成任务，成功时返回 `202` 和 `{ "jobId": "..." }`。
+- `POST /api/invite`：请求体为 JSON `{ "code": "<邀请码>" }`。与 `INVITE_CODE` 一致时设置 HttpOnly 会话 Cookie，并返回 `{ "ok": true }`；否则返回 `401`。仅在配置了非空 `INVITE_CODE` 时用于门禁。
+- `POST /api/analyze`：接收表单字段 `image`，校验通过后保存原图并创建异步生成任务，成功时返回 `202` 和 `{ "jobId": "..." }`。在启用邀请码门禁时，请求需携带通过 `/api/invite` 获取的有效 Cookie。
 - `GET /api/analyze?jobId=<id>`：查询任务状态。任务完成后响应中会包含可展示的 `imageUrl`。
 - `GET /api/analyze?jobId=<id>&asset=output`：读取已完成任务的输出图卡，供页面预览和下载使用。
 
@@ -101,7 +106,7 @@ pnpm lint     # 运行 ESLint
 ./deploy.sh
 ```
 
-脚本会拉取最新代码、构建镜像、重建 `persona-guide` 容器，并将宿主机的 `.env` 和 `storage/` 挂载到容器中。默认对外端口为 `3300`，容器内服务端口为 `3000`。
+脚本会拉取最新代码、构建镜像、重建 `persona-guide` 容器，并将宿主机的 `.env` 和 `storage/` 挂载到容器中。默认对外端口为 `3300`，容器内服务端口为 `3000`。若使用邀请码门禁，在宿主机 `.env` 中配置 `INVITE_CODE` 即可，无需改脚本。
 
 ## 许可证
 
