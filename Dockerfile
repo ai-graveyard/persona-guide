@@ -7,7 +7,7 @@ COPY package.json pnpm-lock.yaml ./
 
 RUN corepack enable pnpm
 RUN pnpm config set registry https://registry.npmmirror.com
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Stage 2: Build the application
 FROM base AS builder
